@@ -1,5 +1,6 @@
-from collections import defaultdict
+from collections import defaultdict, Counter
 import random, math
+import pprint
 from copy import deepcopy
 
 time = 0
@@ -11,7 +12,6 @@ class RLAgent:
     def __init__(self, id, m):
         self.m = m
         self.id = id
-        self.history = []
         self.policy = {}
     def setMass(self, m):
         self.m = m
@@ -50,6 +50,47 @@ class NaiveQAgent(RLAgent):
         #if myState > 12.5 : print state, action, reward, newState
         self.Q[(myState,myAction)] += 0.01 * (myReward + \
                                          0.9999 * max([self.Q[(myNewState, a)] for a in self.legalActions()]) - self.Q[(myState,myAction)] )
+
+class BasicQAgent(RLAgent):
+    def initQ(self):
+        self.Q = defaultdict(int)
+        self.history = defaultdict(Counter) # {s : {o : count}}
+        # {(s,a) : {o : count}}}
+
+    def getQ(self):
+        return self.Q
+
+    def getAction(self, state, explore_prob):
+        if random.random() < explore_prob:
+            return random.choice(self.legalActions())
+        myState = int(state[self.id])
+        acts = self.legalActions()
+
+        if myState not in self.history : return random.choice(acts)
+
+        chosenAction = None
+        maxQ = float("-Inf")
+        for myAction in acts :
+            opponentAction = self.history[(myState,myAction)].most_common(1)[0][0]
+            if self.Q[(myState, myAction, opponentAction)] > maxQ :
+                chosenAction = myAction
+                maxQ = self.Q[(myState, myAction, opponentAction)]
+        return chosenAction
+
+        # opponentAction =  self.history[myState].most_common(1)[0][0]
+        # return sorted(acts, key = lambda a : (self.Q[(myState, a, opponentAction)], random.random()))[-1]
+
+    def learn(self, state, action, reward, newState):
+        myState = int(state[self.id])
+        myAction = action[self.id]
+        opponentId = 1 - self.id
+        opponentAction = action[opponentId]
+        myReward = reward[self.id]
+        myNewState = int(newState[self.id])
+        self.Q[(myState,myAction, opponentAction)] += 0.01 * (myReward + \
+                                         0.9999 * max([self.Q[(myNewState, a, opponentAction)] for a in self.legalActions()]) - self.Q[(myState,myAction, opponentAction)] )
+        # self.history[myState][opponentAction] += 1
+        self.history[(myState,myAction)][opponentAction] += 1
 
 class GameState:
     # state [m1, m2]
@@ -120,29 +161,32 @@ class GameState:
         return [self.state[0]-oldReward[0], self.state[1]-oldReward[1]], [self.state[0], self.state[1]]
 
     def isEnd(self):
-        return min(self.state) <= 1 or max(self.state) >= 13. # min(self.state) >= 12
+        return min(self.state) <= 1 or max(self.state) >= 12. # min(self.state) >= 12
 
+def printQ(Q) :
+    sortedKeys = sorted(Q.iteritems(), key=lambda x:(x[0][0],x[0][2],x[1]), reverse=True)
+    for a in sortedKeys: print "{} : {}".format(*a)
 
-agents = [NaiveQAgent(0, 10), NaiveQAgent(1, 10)]
+agents = [BasicQAgent(0, 10), BasicQAgent(1, 10)]
 agents[0].initQ()
 agents[1].initQ()
 
-for i in range(20000): # how to terminate
+for i in range(100000): # how to terminate
   time += 1
   game = GameState([10, 10])
   while not game.isEnd():
     state = deepcopy(game.getState())
-    actions = (agents[0].getAction(state, 0.05), agents[1].getAction(state, 0.05))
+    actions = (agents[0].getAction(state, 0.2), agents[1].getAction(state, 0.2))
     gains, nextState = game.applyActions(actions)
     agents[0].learn(state, actions, gains, nextState)
     agents[1].learn(state, actions, gains, nextState)
     ### print state, actions
   agents[0].setMass(10)
   agents[1].setMass(10)
-  if i % 2000 == 1: print i
+  if i % 10000 == 1: print i
 
-print agents[0].getQ()
-print agents[1].getQ()
+printQ(agents[0].getQ())
+printQ(agents[1].getQ())
 
 while 1:
   game = GameState([10, 10])
