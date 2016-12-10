@@ -6,6 +6,7 @@ from copy import deepcopy
 import numpy as np
 import matplotlib.pyplot as plt
 time = 0
+Threshold = 15.0
 
 class RLAgent:
     # mass
@@ -36,24 +37,26 @@ class NaiveQAgent(RLAgent):
     def getQ(self):
         return self.Q
 
-    def getAction(self, state, explore_prob):
-        # if random.random() < explore_prob:
-        #     return random.choice(self.legalActions())
+    def getAction(self, state, explore_prob, boltz):
+
         myState = int(state[self.id])
         acts = self.legalActions()
 
-        T = 100.
-        sumProb = 0.
-        for a in acts:
-            sumProb += math.exp(self.Q[(myState, a)]/T)
-        p = []
-        for a in acts:
-            p.append(math.exp(self.Q[(myState, a)]/ T)/ sumProb)
-        p[-1] = 1.-sum(p[0:-1])
-        print np.random.choice(acts, p)
-        return np.random.choice(acts, p)
+        if boltz :
 
+            T = 100.
+            sumProb = 0.
+            for a in acts:
+                sumProb += math.exp(self.Q[(myState, a)]/T)
+            p = []
+            for a in acts:
+                p.append(math.exp(self.Q[(myState, a)]/ T)/ sumProb)
+            p[-1] = 1.-sum(p[0:-1])
+            action =  np.random.choice(acts, 1, p)[0]
+            return action
 
+        if random.random() < explore_prob:
+            return random.choice(self.legalActions())
 
         return sorted(acts, key = lambda a : (self.Q[(myState, a)], random.random()))[-1]
 
@@ -95,9 +98,9 @@ class BasicQAgent(RLAgent):
             for opponentAction in self.history[myState] :
                 reward += self.Q[(myState, myAction, opponentAction)] \
                             * self.history[myState][opponentAction] / totalCount
-                if reward > maxQ :
-                    chosenAction = myAction
-                    maxQ = reward
+            if reward > maxQ :
+                chosenAction = myAction
+                maxQ = reward
             # if self.Q[(myState, myAction, opponentAction)] > maxQ :
             #     chosenAction = myAction
             #     maxQ = self.Q[(myState, myAction, opponentAction)]
@@ -234,14 +237,18 @@ class GameState:
         self.state[0] = newM0
         self.state[1] = newM1
         if self.isEnd():
-            if newM0 > 1 and newM1 > 1:
-                self.state[0] += 1000
-                self.state[1] += 1000
+            if newM0 <= 1 :
+                self.state[0] -= 1000
+            if newM1 <= 1 :
+                self.state[1] -= 1000
+            # if newM0 > 1 and newM1 > 1:
+            #     self.state[0] += 1000
+            #     self.state[1] += 1000
 
         return [self.state[0]-oldReward[0], self.state[1]-oldReward[1]], [self.state[0], self.state[1]]
 
     def isEnd(self):
-        return min(self.state) <= 1 or min(self.state) >= 15. # min(self.state) >= 12
+        return min(self.state) <= 1 or min(self.state) >= Threshold # min(self.state) >= 12
 
 def printQ(Q) :
     sortedKeys = sorted(Q.iteritems(), key=lambda x:(x[0][0],x[0][2],x[1]), reverse=True)
@@ -259,31 +266,51 @@ def extractPolicy(Q):
 
 def getActionRatio(Q): ## return (r_W, r_I, r_A)
     wCount = 0.0
+    aCount = 0.0
     totalCount = 0.0
     p = extractPolicy(Q)
     for s in p:
         wCount += int(p[s] == 'W')
+        aCount += int(p[s] == 'A')
         totalCount += 1
     if totalCount == 0: return 0
-    return float(wCount) / totalCount
+    return float(wCount) / totalCount, float(aCount) / totalCount
 
 def simulateGame(agents) :
+    totalActionCount = 0.0
+    workCount1 = 0.0
+    workCount2 = 0.0
+    attackCount1 = 0.0
+    attackCount2 = 0.0
+    successCount = 0.0
+    #for i in range(101) :
     game = GameState([10, 10])
     count = 0
     while not game.isEnd():
         state = deepcopy(game.getState())
-        actions = (agents[0].getAction(state, 0.), agents[1].getAction(state, 0.))
+        actions = (agents[0].getAction(state, 0., False), agents[1].getAction(state, 0., False))
         gains, nextState = game.applyActions(actions)
-        agents[0].learn(state, actions, gains, nextState)
-        agents[1].learn(state, actions, gains, nextState)
+        #agents[0].learn(state, actions, gains, nextState)
+        #agents[1].learn(state, actions, gains, nextState)
         count += 1
         if count > 500 : break
+        if actions[0] == 'W' : workCount1 += 1
+        if actions[1] == 'W' : workCount2 += 1
+        if actions[0] == 'A' : attackCount1 += 1
+        if actions[1] == 'A' : attackCount2 += 1
+        totalActionCount += 1
     final = game.getState()
-    return final
+    successCount += int(min(final) > Threshold)
+    r1 = workCount1 / totalActionCount
+    a1 = attackCount1 / totalActionCount
+    r2 = workCount2 / totalActionCount
+    a2 = attackCount2 / totalActionCount
+    # print r, workCount, totalActionCount
+    return successCount , r1, a1, r2, a2
 
 
 def main_1():
-    agents = [NaiveQAgent(0, 10), TFTAgent(1, 10)]
+    agents = [NaiveQAgent(0, 10), NaiveQAgent(1, 10)]
     agents[0].initQ()
     agents[1].initQ()
 
@@ -292,7 +319,7 @@ def main_1():
       game = GameState([10, 10])
       while not game.isEnd():
         state = deepcopy(game.getState())
-        actions = (agents[0].getAction(state, 0.2), agents[1].getAction(state, 0.2))
+        actions = (agents[0].getAction(state, 0.05, True), agents[1].getAction(state, 0.05, True))
         gains, nextState = game.applyActions(actions)
         agents[0].learn(state, actions, gains, nextState)
         agents[1].learn(state, actions, gains, nextState)
@@ -312,7 +339,7 @@ def main_1():
         while not game.isEnd():
             state = game.getState()
 
-            actions = (agents[0].getAction(state, 0.0), agents[1].getAction(state, 0.0))
+            actions = (agents[0].getAction(state, 0.0, False), agents[1].getAction(state, 0.0, False))
             gains, nextState = game.applyActions(actions)
             agents[0].learn(state, actions, gains, nextState)
             agents[1].learn(state, actions, gains, nextState)
@@ -322,37 +349,68 @@ def main_1():
 def main_2():
 
     success = []
+    coopRatio1 = []
+    attackRatio1 = []
+    coopRatio2 = []
+    attackRatio2 = []
     firstWin = []
     probW_P1 = []
     probW_P2 = []
-    agents = [NaiveQAgent(0, 10), TFTAgent(1, 10)]
+    agents = [NaiveQAgent(0, 10), NaiveQAgent(1, 10)]
     agents[0].initQ()
     agents[1].initQ()
 
-    for i in range(10000): # how to terminate
+    maxIter = 500000
+    simulationStep = 10
+    for i in range(maxIter): # how to terminate
         game = GameState([10, 10])
+        exploreProb = 0.1
         while not game.isEnd():
             state = deepcopy(game.getState())
-            actions = (agents[0].getAction(state, 0.2), agents[1].getAction(state, 0.2))
+            actions = (agents[0].getAction(state, exploreProb, False), agents[1].getAction(state, exploreProb, False))
             gains, nextState = game.applyActions(actions)
             agents[0].learn(state, actions, gains, nextState)
             agents[1].learn(state, actions, gains, nextState)
-      ### print state, actions
-      #print count, game.getState()
-      #   agents[0].setMass(10)
-      #   agents[1].setMass(10)
-        if i % 100 == 0:
-            print i
-            final = simulateGame(agents)
-            success.append(int(min(final) > 2))
-            firstWin.append(int(final[0] > final[1]))
+        if i % simulationStep == 0:
+            # print i
+            final, r1, a1, r2, a2 = simulateGame(agents)
+            if i % 1000 == 0: print i, final, r1, r2
+            success.append(final)
+            coopRatio1.append(r1)
+            attackRatio1.append(a1)
+            coopRatio2.append(r2)
+            attackRatio2.append(a2)
 
-    success = np.sum(np.array(success).reshape(20, 5), axis=1) * (1./5)
-    plt.plot(success)
+    avgWindow = 250
+    numPoints = maxIter / simulationStep / avgWindow
+
+    #success = np.sum(np.array(success).reshape(20, 5), axis=1) * (1./5)
+    success = np.sum(np.array(success).reshape(numPoints, avgWindow), axis=1) * (1./avgWindow)
+    plt.plot(success, '*')
+    plt.ylim([-0.1,1.2])
+    # plt.xlabel('episode')
+    # plt.ylabel('success rate')
+    # plt.title('success rate as a function of episodes with Threshold=13')
+    # plt.show()
+    coopRatio1 = np.sum(np.array(coopRatio1).reshape(numPoints, avgWindow), axis=1) * (1./avgWindow)
+    plt.plot(coopRatio1, 'g+-', label='work p1')
+    attackRatio1 = np.sum(np.array(attackRatio1).reshape(numPoints, avgWindow), axis=1) * (1./avgWindow)
+    plt.plot(attackRatio1, 'r+-', label='attack p1')
+
+    coopRatio2 = np.sum(np.array(coopRatio2).reshape(numPoints, avgWindow), axis=1) * (1./avgWindow)
+    plt.plot(coopRatio2, 'g*-', label='work p2')
+    attackRatio2 = np.sum(np.array(attackRatio2).reshape(numPoints, avgWindow), axis=1) * (1./avgWindow)
+    plt.plot(attackRatio2, 'r*-', label='attack p2')
+
+    plt.legend(loc=2)
     plt.show()
-    firstWin = np.sum(np.array(firstWin).reshape(20, 5), axis=1) * (1./5)
-    plt.plot(firstWin)
-    plt.show()
+    # plt.xlabel('episode')
+    # plt.ylabel('cooperation ratio')
+    # plt.title('cooperation ratio as a function of episodes with Threshold=13')
+
+    # firstWin = np.sum(np.array(firstWin).reshape(20, 5), axis=1) * (1./5)
+    # plt.plot(firstWin)
+    # plt.show()
 
     # probW_P1 = np.array(probW_P1)
     # probW_P2 = np.array(probW_P2)
@@ -367,13 +425,13 @@ def main_2():
         game = GameState([10, 10])
         while not game.isEnd():
             state = game.getState()
-            actions = (agents[0].getAction(state, 0.0), agents[1].getAction(state, 0.0))
+            actions = (agents[0].getAction(state, 0.0, False), agents[1].getAction(state, 0.0, False))
             gains, nextState = game.applyActions(actions)
             agents[0].learn(state, actions, gains, nextState)
             agents[1].learn(state, actions, gains, nextState)
-            print state, actions
+            # print state, actions
             x = raw_input()
 
 
 if __name__ == '__main__':
-    main_1()
+    main_2()
